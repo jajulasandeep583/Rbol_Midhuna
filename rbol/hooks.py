@@ -128,6 +128,9 @@ app_license = "mit"
 # DocType Class
 # ---------------
 # Override standard doctype classes
+override_doctype_class = {
+    "Shift Request": "rbol.custom_shift_request.CustomShiftRequest"
+}
 
 # override_doctype_class = {
 # 	"ToDo": "custom_app.overrides.CustomToDo"
@@ -136,6 +139,11 @@ app_license = "mit"
 # Document Events
 # ---------------
 # Hook on document methods and events
+doc_events = {
+    "Shift Request": {
+        "on_submit": "rbol.shift_request_utils.handle_shift_update"
+    }
+}
 
 # doc_events = {
 # 	"*": {
