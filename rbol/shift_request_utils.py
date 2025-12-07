@@ -31,6 +31,8 @@ def handle_shift_update(doc, method):
 
         for s in existing:
             shift_doc = frappe.get_doc("Shift Assignment", s.name)
+            # Cancel with ignore_permissions to avoid permission errors
+            shift_doc.flags.ignore_permissions = True
             shift_doc.cancel()
 
         # 2. Create new shift for the day
@@ -42,6 +44,7 @@ def handle_shift_update(doc, method):
             "end_date": current
         })
 
+        new_assignment.flags.ignore_permissions = True
         new_assignment.insert(ignore_permissions=True)
         new_assignment.submit()
 
