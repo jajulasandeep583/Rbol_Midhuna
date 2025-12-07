@@ -1,6 +1,5 @@
 import frappe
 from frappe import _
-from frappe.model.document import Document
 from frappe.utils import get_link_to_form
 from datetime import timedelta
 import hrms
@@ -8,12 +7,15 @@ from hrms.hr.doctype.shift_assignment.shift_assignment import has_overlapping_ti
 from hrms.hr.utils import share_doc_with_approver, validate_active_employee
 from hrms.mixins.pwa_notifications import PWANotificationsMixin
 
+# Import the original ShiftRequest class
+from hrms.hr.doctype.shift_request.shift_request import ShiftRequest
+
 
 class OverlappingShiftRequestError(frappe.ValidationError):
 	pass
 
 
-class CustomShiftRequest(Document, PWANotificationsMixin):
+class CustomShiftRequest(ShiftRequest):
 
 	def validate(self):
 		validate_active_employee(self.employee)
@@ -27,8 +29,11 @@ class CustomShiftRequest(Document, PWANotificationsMixin):
 		self.notify_approval_status()
 		self.publish_update()
 
+		# Auto-submit when approved (only in draft state)
 		if self.docstatus == 0 and self.status == "Approved":
 			frappe.msgprint("Shift Request auto-submitted because status is Approved.")
+			# Use flags to avoid validation conflicts
+			self.flags.ignore_validate = True
 			self.submit()
 			return
 
@@ -50,70 +55,78 @@ class CustomShiftRequest(Document, PWANotificationsMixin):
 		if self.status == "Rejected":
 			return
 
+		# Your custom logic for handling shift assignments
 		employee = self.employee
 		shift_type = self.shift_type
 		req_date = frappe.utils.getdate(self.from_date)
 		req_end = frappe.utils.getdate(self.to_date)
 
-		if req_date != req_end:
-			frappe.throw("Shift Request should be only for one date.")
+		# For single day request - use your split logic
+		if req_date == req_end:
+			old_assignments = frappe.get_all(
+				"Shift Assignment",
+				filters={
+					"employee": employee,
+					"start_date": ("<=", req_date),
+					"end_date": (">=", req_date),
+					"docstatus": 1
+				},
+				fields=["name", "start_date", "end_date"]
+			)
 
-		old_assignments = frappe.get_all(
-			"Shift Assignment",
-			filters={
+			for old in old_assignments:
+				old_doc = frappe.get_doc("Shift Assignment", old.name)
+				start = frappe.utils.getdate(old.start_date)
+				end = frappe.utils.getdate(old.end_date)
+				# Cancel with ignore_permissions to avoid permission errors
+				old_doc.flags.ignore_permissions = True
+				old_doc.cancel()
+
+				if start < req_date:
+					part1 = frappe.get_doc({
+						"doctype": "Shift Assignment",
+						"employee": employee,
+						"company": self.company,
+						"shift_type": old_doc.shift_type,
+						"start_date": start,
+						"end_date": req_date - timedelta(days=1)
+					})
+					part1.flags.ignore_permissions = True
+					part1.insert(ignore_permissions=True)
+					part1.submit()
+
+				if end > req_date:
+					part2 = frappe.get_doc({
+						"doctype": "Shift Assignment",
+						"employee": employee,
+						"company": self.company,
+						"shift_type": old_doc.shift_type,
+						"start_date": req_date + timedelta(days=1),
+						"end_date": end
+					})
+					part2.flags.ignore_permissions = True
+					part2.insert(ignore_permissions=True)
+					part2.submit()
+
+			new_assignment = frappe.get_doc({
+				"doctype": "Shift Assignment",
 				"employee": employee,
-				"start_date": ("<=", req_date),
-				"end_date": (">=", req_date),
-				"docstatus": 1
-			},
-			fields=["name", "start_date", "end_date"]
-		)
+				"company": self.company,
+				"shift_type": shift_type,
+				"start_date": req_date,
+				"end_date": req_date,
+				"shift_request": self.name
+			})
+			new_assignment.insert(ignore_permissions=True)
+			new_assignment.submit()
 
-		for old in old_assignments:
-			old_doc = frappe.get_doc("Shift Assignment", old.name)
-			start = frappe.utils.getdate(old.start_date)
-			end = frappe.utils.getdate(old.end_date)
-			old_doc.cancel()
-
-			if start < req_date:
-				part1 = frappe.get_doc({
-					"doctype": "Shift Assignment",
-					"employee": employee,
-					"company": self.company,
-					"shift_type": old_doc.shift_type,
-					"start_date": start,
-					"end_date": req_date - timedelta(days=1)
-				})
-				part1.insert(ignore_permissions=True)
-				part1.submit()
-
-			if end > req_date:
-				part2 = frappe.get_doc({
-					"doctype": "Shift Assignment",
-					"employee": employee,
-					"company": self.company,
-					"shift_type": old_doc.shift_type,
-					"start_date": req_date + timedelta(days=1),
-					"end_date": end
-				})
-				part2.insert(ignore_permissions=True)
-				part2.submit()
-
-		new_assignment = frappe.get_doc({
-			"doctype": "Shift Assignment",
-			"employee": employee,
-			"company": self.company,
-			"shift_type": shift_type,
-			"start_date": req_date,
-			"end_date": req_date,
-			"shift_request": self.name
-		})
-		new_assignment.insert(ignore_permissions=True)
-		new_assignment.submit()
-
-		frappe.msgprint(
-			f"Shift updated to '{shift_type}' for {req_date} without affecting remaining dates."
-		)
+			frappe.msgprint(
+				f"Shift updated to '{shift_type}' for {req_date} without affecting remaining dates."
+			)
+		else:
+			# For date range - use the utility function
+			from rbol.shift_request_utils import handle_shift_update
+			handle_shift_update(self, None)
 
 	def on_cancel(self):
 		shift_assignment_list = frappe.db.get_all(
@@ -132,6 +145,10 @@ class CustomShiftRequest(Document, PWANotificationsMixin):
 			)
 
 	def validate_approver(self):
+		# Skip validation if document is already approved/rejected (during submit)
+		if self.docstatus == 1:
+			return
+			
 		department = frappe.get_value("Employee", self.employee, "department")
 		shift_approver = frappe.get_value("Employee", self.employee, "shift_request_approver")
 		approvers = frappe.db.sql(
@@ -140,9 +157,11 @@ class CustomShiftRequest(Document, PWANotificationsMixin):
 			(department),
 		)
 		approver_list = [a[0] for a in approvers]
-		approver_list.append(shift_approver)
+		if shift_approver:
+			approver_list.append(shift_approver)
 
-		if self.approver not in approver_list:
+		# Allow if no approver is set yet (draft state) or if approver is in the list
+		if self.approver and self.approver not in approver_list:
 			frappe.throw(_("Only Approvers can Approve this Request."))
 
 	def validate_overlapping_shift_requests(self):
