@@ -139,11 +139,13 @@ override_doctype_class = {
 # Document Events
 # ---------------
 # Hook on document methods and events
-doc_events = {
-    "Shift Request": {
-        "on_submit": "rbol.shift_request_utils.handle_shift_update"
-    }
-}
+# NOTE: on_submit is already handled by CustomShiftRequest class override
+# Commenting out to avoid double processing
+# doc_events = {
+#     "Shift Request": {
+#         "on_submit": "rbol.shift_request_utils.handle_shift_update"
+#     }
+# }
 
 # doc_events = {
 # 	"*": {
@@ -249,4 +251,3 @@ doc_events = {
 # default_log_clearing_doctypes = {
 # 	"Logging DocType Name": 30  # days to retain logs
 # }
-
