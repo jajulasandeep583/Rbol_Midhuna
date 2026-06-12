@@ -251,3 +251,9 @@ override_doctype_class = {
 # default_log_clearing_doctypes = {
 # 	"Logging DocType Name": 30  # days to retain logs
 # }
+
+# RBOL Roster (copy of HRMS v16.7.1 roster frontend, served at /roster-rbol)
+website_route_rules = [
+	{"from_route": "/roster-rbol", "to_route": "roster_rbol"},
+	{"from_route": "/roster-rbol/<path:app_path>", "to_route": "roster_rbol"},
+]

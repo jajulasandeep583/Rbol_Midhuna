@@ -1,0 +1,12 @@
+{
+	"private": true,
+	"name": "rbol",
+	"description": "RBOL Midhuna customizations for Frappe HR",
+	"scripts": {
+		"postinstall": "yarn install-roster-deps",
+		"install-roster-deps": "cd roster && yarn install --check-files",
+		"dev-roster": "cd roster && yarn dev",
+		"build": "yarn build-roster",
+		"build-roster": "cd roster && yarn build"
+	}
+}
