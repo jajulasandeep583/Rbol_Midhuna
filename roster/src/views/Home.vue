@@ -45,13 +45,13 @@ function isGuest() {
 
 function relogin() {
 	sessionStorage.removeItem(RELOAD_FLAG);
-	window.location.href = "/login?redirect-to=%2Froster-rbol";
+	window.location.href = "/login?redirect-to=%2Froster";
 }
 
 // RESOURCES
 
 const user = createResource({
-	url: "hrms.api.get_current_user_info",
+	url: "rbol.api.get_current_user_info",
 	auto: true,
 	onSuccess() {
 		sessionStorage.removeItem(RELOAD_FLAG);
@@ -60,7 +60,7 @@ const user = createResource({
 		// Not logged in -> go to login (once; /login bounces logged-in users
 		// back here, so redirecting unconditionally caused an infinite loop).
 		if (isGuest()) {
-			window.location.href = "/login?redirect-to=%2Froster-rbol";
+			window.location.href = "/login?redirect-to=%2Froster";
 			return;
 		}
 		// Logged in but the call failed (stale CSRF token after a server

@@ -9,7 +9,7 @@ const routes = [
 ];
 
 const router = createRouter({
-	history: createWebHistory("/roster-rbol"),
+	history: createWebHistory("/roster"),
 	routes,
 });
 

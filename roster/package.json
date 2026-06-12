@@ -7,7 +7,7 @@
     "dev": "vite",
     "serve": "vite preview",
     "build": "vite build --base=/assets/rbol/roster/ && yarn copy-html-entry",
-    "copy-html-entry": "cp ../rbol/public/roster/index.html ../rbol/www/roster_rbol.html"
+    "copy-html-entry": "cp ../rbol/public/roster/index.html ../rbol/www/roster.html"
   },
   "dependencies": {
     "@vitejs/plugin-vue": "^4.4.0",
