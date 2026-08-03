@@ -1,13 +1,8 @@
 @import "frappe-ui/src/style.css";
 
 /*
- * frappe-ui Autocomplete caps its dropdown at max-h-[15rem], which only leaves
- * room for ~7 rows once the sticky search box is subtracted. With 11 Shift Types
- * the list looked truncated - the rest were only reachable by scrolling or by
- * typing. Give the listbox more room, bounded by the viewport so it still
- * behaves on small screens.
- * ul[role="listbox"] (0,1,1) outranks Tailwind .max-h-\[15rem\] (0,1,0).
+ * Dropdown height is set at runtime by utils/dropdownFit.ts, which measures the
+ * room each listbox actually has. A fixed cap here can't work: 15rem truncates
+ * a long list, and anything taller runs off the bottom of the screen when the
+ * trigger sits low on the page.
  */
-ul[role="listbox"] {
-	max-height: min(28rem, 60vh);
-}
