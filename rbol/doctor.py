@@ -37,6 +37,26 @@ ROSTER_DOCTYPES = [
 ]
 
 
+class _CliSessionObj:
+	"""Stand-in for frappe.local.session_obj under `bench execute`.
+
+	www/roster.py calls frappe.sessions.get_csrf_token(), which generates a
+	token into session.data and then persists it via session_obj.update().
+	A CLI context has no session_obj, so the render died with
+	"AttributeError: session_obj" and check #8 always failed - even though
+	/roster was fine over HTTP. Persisting is pointless for a throwaway
+	diagnostic render, so no-op it instead of writing a __Session row.
+	"""
+
+	def update(self, force=False):
+		pass
+
+
+def _ensure_session_obj():
+	if not getattr(frappe.local, "session_obj", None):
+		frappe.local.session_obj = _CliSessionObj()
+
+
 def run():
 	passed, failed = 0, 0
 
@@ -148,6 +168,7 @@ def run():
 		from frappe.website.serve import get_response_content
 
 		frappe.set_user("Administrator")
+		_ensure_session_obj()
 		html = get_response_content("roster")
 		ok = bool(js_ref) and js_ref in (html or "")
 		check(
