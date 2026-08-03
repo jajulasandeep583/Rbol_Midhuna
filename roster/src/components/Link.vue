@@ -41,6 +41,12 @@ const props = defineProps({
 		type: String,
 		default: "",
 	},
+	// Number of options to fetch from the server. 0 means no limit, so every
+	// matching record shows up in the dropdown instead of Frappe's default 10.
+	pageLength: {
+		type: Number,
+		default: 0,
+	},
 });
 
 const emit = defineEmits(["update:modelValue"]);
@@ -65,6 +71,7 @@ const options = createResource({
 		doctype: props.doctype,
 		txt: searchText.value,
 		filters: props.filters,
+		page_length: props.pageLength,
 	},
 	method: "POST",
 	transform: (data) => {
@@ -88,6 +95,8 @@ const reloadOptions = (searchTextVal) => {
 		params: {
 			txt: searchTextVal,
 			doctype: props.doctype,
+			filters: props.filters,
+			page_length: props.pageLength,
 		},
 	});
 	options.reload();
