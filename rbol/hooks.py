@@ -129,7 +129,8 @@ app_license = "mit"
 # ---------------
 # Override standard doctype classes
 override_doctype_class = {
-    "Shift Request": "rbol.custom_shift_request.CustomShiftRequest"
+    "Shift Request": "rbol.custom_shift_request.CustomShiftRequest",
+    "Shift Assignment": "rbol.custom_shift_assignment.CustomShiftAssignment",
 }
 
 # override_doctype_class = {
