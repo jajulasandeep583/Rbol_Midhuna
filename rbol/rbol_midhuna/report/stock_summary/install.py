@@ -42,3 +42,8 @@ def install():
 	doc.save(ignore_permissions=True)
 	frappe.db.commit()
 	frappe.clear_cache()
+
+
+def execute():
+	"""Patch entry point — frappe calls <patchmodule>.execute()."""
+	install()
