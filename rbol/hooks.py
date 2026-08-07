@@ -125,6 +125,14 @@ app_license = "mit"
 # 	"Event": "frappe.desk.doctype.event.event.has_permission",
 # }
 
+# Restricted warehouse ("Central Location - RBOL" -> DGM Finance only).
+# Covers list views, link pickers, /api/resource and report-builder views.
+permission_query_conditions = {
+	"Warehouse": "rbol.overrides.permissions.warehouse_query",
+	"Stock Ledger Entry": "rbol.overrides.permissions.stock_ledger_entry_query",
+	"Bin": "rbol.overrides.permissions.bin_query",
+}
+
 # DocType Class
 # ---------------
 # Override standard doctype classes
@@ -147,6 +155,12 @@ override_doctype_class = {
 #         "on_submit": "rbol.shift_request_utils.handle_shift_update"
 #     }
 # }
+
+doc_events = {
+	"Stock Ledger Entry": {
+		"before_insert": "rbol.overrides.permissions.block_restricted_warehouse",
+	},
+}
 
 # doc_events = {
 # 	"*": {
@@ -205,14 +219,25 @@ override_doctype_class = {
 
 # ignore_links_on_delete = ["Communication", "ToDo"]
 
+# Overriding Methods
+# ------------------
+# Script reports build their own SQL, so a Permission Query never reaches them.
+# Filter the rows on the way out instead — one seam covers every report.
+override_whitelisted_methods = {
+	"frappe.desk.query_report.run": "rbol.overrides.report_filter.run",
+}
+
 # Request Events
 # ----------------
-# before_request = ["rbol.utils.before_request"]
+# `_export_query` calls the module-level `query_report.run` directly, so the
+# override above does not reach CSV/Excel export or report-backed dashboard
+# charts. Wrapping it here does. Idempotent, and re-checks the user per call.
+before_request = ["rbol.overrides.report_filter.install_report_filter"]
 # after_request = ["rbol.utils.after_request"]
 
 # Job Events
 # ----------
-# before_job = ["rbol.utils.before_job"]
+before_job = ["rbol.overrides.report_filter.install_report_filter"]
 # after_job = ["rbol.utils.after_job"]
 
 # User Data Protection
