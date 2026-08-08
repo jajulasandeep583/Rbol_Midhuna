@@ -294,4 +294,181 @@ def _run():
 		"now shift=" + str(frappe.db.get_value("Employee Checkin", tail.name, "shift")))
 	wipe()
 
+	# ================================================================
+	# ROTATION: a real day-wise A/B/C roster -- one Shift Assignment per day,
+	# weekly rotation, attendance already marked for every day up to today, and
+	# a cross-midnight C punch sitting on the very day we want to change.
+	#   01-08, 02-08     B
+	#   03-08 .. 09-08   C     <- today is 08-08, tomorrow is 09-08
+	#   10-08 .. 16-08   A
+	#   17-08 .. 21-08   B
+	# ================================================================
+	ROSTER = {}
+	for i in range(21):
+		day = str(add_days("2026-08-01", i))
+		if day <= "2026-08-02":
+			ROSTER[day] = "B"
+		elif day <= "2026-08-09":
+			ROSTER[day] = "C"
+		elif day <= "2026-08-16":
+			ROSTER[day] = "A"
+		else:
+			ROSTER[day] = "B"
+
+	def build_rotation():
+		wipe()
+		by_day = {day: mk(shift, day, day) for day, shift in sorted(ROSTER.items())}
+		for day, shift in sorted(ROSTER.items()):
+			if day > TODAY:
+				continue
+			a = att(day, shift)
+			if shift == "C":
+				# 22:05 that evening and 06:05 the NEXT morning -- both belong
+				# to this day's shift and both carry THIS day's Attendance
+				for c in (ci(day + " 22:05:00", "IN"),
+						ci(str(add_days(day, 1)) + " 06:05:00", "OUT")):
+					frappe.db.set_value("Employee Checkin", c.name, "attendance", a.name)
+		frappe.db.commit()
+		return by_day
+
+	def roster_now():
+		return {
+			str(r.start_date): r.shift_type
+			for r in frappe.get_all("Shift Assignment",
+				filters={"employee": emp.name, "docstatus": 1},
+				fields=["shift_type", "start_date"], order_by="start_date")
+		}
+
+	# ---------------------------------------------------------------- 12
+	# THE REPORTED BUG: day-wise roster, change 09-08 from C to B while the
+	# 09-08 06:05 punch carries the 08-08 Attendance.
+	by_day = build_rotation()
+	out_punch = frappe.get_all("Employee Checkin",
+		filters={"employee": emp.name,
+			"time": ("between", [TOMORROW + " 00:00:00", TOMORROW + " 12:00:00"])},
+		fields=["name", "shift", "shift_start", "attendance"])
+	ok("12 setup: a punch sits on 09-08 morning", len(out_punch) == 1, str(out_punch))
+	ok("12 setup: that punch belongs to the shift that started 08-08",
+		len(out_punch) == 1 and str(out_punch[0].shift_start).startswith(TODAY),
+		str(out_punch[0].shift_start) if out_punch else "-")
+	ok("12 setup: and it carries the 08-08 Attendance",
+		len(out_punch) == 1
+		and frappe.db.get_value("Attendance", out_punch[0].attendance, "attendance_date") == getdate(TODAY))
+
+	before_att = frappe.get_all("Attendance", filters={"employee": emp.name, "docstatus": 1},
+		fields=["name", "attendance_date", "shift"], order_by="attendance_date")
+	try:
+		change_shift_from(by_day[TOMORROW].name, TOMORROW, "B")
+		frappe.db.commit()
+		ok("12 change 09-08 from C to B on a day-wise roster", True)
+	except Exception as e:
+		frappe.db.rollback()
+		ok("12 change 09-08 from C to B on a day-wise roster", False,
+			frappe.utils.strip_html(str(e))[:200])
+
+	now = roster_now()
+	ok("12 09-08 is now B", now.get(TOMORROW) == "B", str(now.get(TOMORROW)))
+	ok("12 08-08 is still C", now.get(TODAY) == "C", str(now.get(TODAY)))
+	ok("12 10-08 is untouched", now.get("2026-08-10") == "A", str(now.get("2026-08-10")))
+	ok("12 no day gained or lost", len(now) == len(ROSTER), f"{len(now)} vs {len(ROSTER)}")
+	ok("12 every other day unchanged",
+		all(now.get(d) == s for d, s in ROSTER.items() if d != TOMORROW),
+		str({d: (s, now.get(d)) for d, s in ROSTER.items() if d != TOMORROW and now.get(d) != s}))
+
+	after_att = frappe.get_all("Attendance", filters={"employee": emp.name, "docstatus": 1},
+		fields=["name", "attendance_date", "shift"], order_by="attendance_date")
+	ok("12 all marked days survive untouched", before_att == after_att,
+		f"{len(before_att)} -> {len(after_att)}")
+	ok("12 the 09-08 morning punch still belongs to 08-08's C shift",
+		frappe.db.get_value("Employee Checkin", out_punch[0].name, "shift") == "C"
+		and str(frappe.db.get_value("Employee Checkin", out_punch[0].name, "shift_start")).startswith(TODAY),
+		str(frappe.db.get_value("Employee Checkin", out_punch[0].name, ["shift", "shift_start"])))
+
+	# ---------------------------------------------------------------- 13
+	# the plain "delete the 09-08 shift" route must work too
+	by_day = build_rotation()
+	try:
+		d = frappe.get_doc("Shift Assignment", by_day[TOMORROW].name)
+		d.flags.ignore_permissions = True
+		d.cancel()
+		frappe.db.commit()
+		ok("13 plain cancel of the 09-08 C assignment", True)
+	except Exception as e:
+		frappe.db.rollback()
+		ok("13 plain cancel of the 09-08 C assignment", False,
+			frappe.utils.strip_html(str(e))[:200])
+	ok("13 08-08 C survives the cancel", roster_now().get(TODAY) == "C")
+	ok("13 08-08 Attendance survives the cancel",
+		frappe.db.get_value("Attendance",
+			{"employee": emp.name, "attendance_date": TODAY}, "docstatus") == 1)
+
+	# ---------------------------------------------------------------- 14
+	# today itself is already marked -- that one must still be refused
+	by_day = build_rotation()
+	try:
+		change_shift_from(by_day[TODAY].name, TODAY, "B")
+		frappe.db.commit()
+		ok("14 refuses to change a day that is already marked", False, "it went through")
+	except frappe.ValidationError as e:
+		frappe.db.rollback()
+		ok("14 refuses to change a day that is already marked", True,
+			frappe.utils.strip_html(str(e))[:110])
+	ok("14 08-08 still C after the refusal", roster_now().get(TODAY) == "C")
+
+	# ---------------------------------------------------------------- 15
+	# LOOP: walk forward changing several days in a row
+	build_rotation()
+	plan = [(TOMORROW, "B"), ("2026-08-10", "C"), ("2026-08-11", "B"), ("2026-08-12", "C")]
+	loop_ok = True
+	loop_detail = []
+	for day, new_shift in plan:
+		try:
+			target = frappe.get_all("Shift Assignment",
+				filters={"employee": emp.name, "docstatus": 1, "start_date": day}, pluck="name")
+			change_shift_from(target[0], day, new_shift)
+			frappe.db.commit()
+			loop_detail.append(f"{day}->{new_shift} ok")
+		except Exception as e:
+			frappe.db.rollback()
+			loop_ok = False
+			loop_detail.append(f"{day}->{new_shift} FAILED: " + frappe.utils.strip_html(str(e))[:90])
+	ok("15 loop: four days changed one after another", loop_ok, "; ".join(loop_detail))
+	now = roster_now()
+	ok("15 loop: every changed day holds its new shift",
+		all(now.get(d) == s for d, s in plan), str({d: now.get(d) for d, _ in plan}))
+	ok("15 loop: days outside the plan are untouched",
+		all(now.get(d) == s for d, s in ROSTER.items() if d not in dict(plan)),
+		str({d: (s, now.get(d)) for d, s in ROSTER.items()
+			if d not in dict(plan) and now.get(d) != s}))
+	ok("15 loop: still one live assignment per day, none lost or duplicated",
+		len(now) == len(ROSTER)
+		and len(frappe.get_all("Shift Assignment",
+			filters={"employee": emp.name, "docstatus": 1})) == len(ROSTER),
+		f"{len(now)} distinct dates vs {len(ROSTER)} expected")
+
+	# ---------------------------------------------------------------- 16
+	# WEEK-BLOCK rotation (date ranges, not single days) -- change mid-block
+	wipe()
+	blocks = [("C", "2026-08-01", "2026-08-07"), ("A", "2026-08-08", "2026-08-14"),
+		("B", "2026-08-15", "2026-08-21")]
+	made = [mk(s, f, t) for s, f, t in blocks]
+	att("2026-08-08", "A")
+	try:
+		change_shift_from(made[1].name, "2026-08-10", "C")
+		frappe.db.commit()
+		ok("16 week-block roster: change mid-block", True)
+	except Exception as e:
+		frappe.db.rollback()
+		ok("16 week-block roster: change mid-block", False, frappe.utils.strip_html(str(e))[:200])
+	rows = frappe.get_all("Shift Assignment", filters={"employee": emp.name, "docstatus": 1},
+		fields=["shift_type", "start_date", "end_date"], order_by="start_date")
+	shown = "; ".join(f"{r.shift_type} {r.start_date}->{r.end_date}" for r in rows)
+	ok("16 result is C 01-07, A 08-09, C 10-14, B 15-21",
+		shown == ("C 2026-08-01->2026-08-07; A 2026-08-08->2026-08-09; "
+			"C 2026-08-10->2026-08-14; B 2026-08-15->2026-08-21"), shown)
+	ok("16 no gap and no overlap between blocks",
+		len(rows) == 4 and all(getdate(rows[i + 1].start_date) == add_days(rows[i].end_date, 1)
+			for i in range(len(rows) - 1)), shown)
+	wipe()
+
 	cleanup()

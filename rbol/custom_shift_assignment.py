@@ -43,18 +43,8 @@ INLINE_RESYNC_LIMIT = 200
 
 class CustomShiftAssignment(ShiftAssignment):
 	def validate_employee_checkin(self):
-		filters = {
-			"employee": self.employee,
-			"shift": self.shift_type,
-			"attendance": ("is", "set"),
-		}
-		filters["time"] = self._date_range_filter()
-
-		checkins_with_attendance = frappe.get_all(
-			"Employee Checkin", filters=filters, fields=["name", "attendance"], limit=1
-		)
-		if checkins_with_attendance:
-			row = checkins_with_attendance[0]
+		row = self.get_blocking_checkin()
+		if row:
 			frappe.throw(
 				_(
 					"Cannot cancel Shift Assignment {0}: Employee Checkin {1} is already processed into Attendance {2}."
@@ -67,6 +57,43 @@ class CustomShiftAssignment(ShiftAssignment):
 				+ self._change_shift_hint(),
 				title=_("Attendance Already Generated"),
 			)
+
+	def get_blocking_checkin(self):
+		"""A punch blocks only if it belongs to a shift this assignment covers
+		AND has already been rolled into an Attendance.
+
+		"Belongs to" is decided by shift_start -- the moment the shift the punch
+		was mapped to began -- NOT by the punch's own clock time. On a night
+		shift they are different days: C runs 22:00 -> 06:00, so the out-punch
+		at 06:05 on the 9th belongs to the shift that started on the 8th and its
+		Attendance is dated the 8th. Judging by clock time made a day-wise
+		assignment for the 9th refuse to budge because of the 8th's record.
+		"""
+		base = {
+			"employee": self.employee,
+			"shift": self.shift_type,
+			"attendance": ("is", "set"),
+		}
+		fields = ["name", "attendance", "time", "shift_start"]
+
+		rows = frappe.get_all(
+			"Employee Checkin",
+			filters=dict(base, shift_start=self._date_range_filter()),
+			fields=fields,
+			limit=1,
+		)
+		if rows:
+			return rows[0]
+
+		# punches that were never mapped to a shift have no shift_start to go
+		# on, so fall back to their own timestamp
+		rows = frappe.get_all(
+			"Employee Checkin",
+			filters=dict(base, shift_start=("is", "not set"), time=self._date_range_filter()),
+			fields=fields,
+			limit=1,
+		)
+		return rows[0] if rows else None
 
 	def validate_attendance(self):
 		"""Same protection as core, minus two defects: core counts CANCELLED
