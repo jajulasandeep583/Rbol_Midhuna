@@ -470,5 +470,32 @@ def _run():
 		len(rows) == 4 and all(getdate(rows[i + 1].start_date) == add_days(rows[i].end_date, 1)
 			for i in range(len(rows) - 1)), shown)
 	wipe()
+	wipe()
+
+	# ---------------------------------------------------------------- 17
+	# enable_auto_attendance is ON for the real A/B/C shift types, and the
+	# scheduler decides which shift a punch belongs to via HRMS
+	# get_actual_start_end_datetime_of_shift. That has to agree with the change,
+	# otherwise auto-attendance would keep marking the old shift.
+	from hrms.hr.doctype.shift_assignment.shift_assignment import (
+		get_actual_start_end_datetime_of_shift as shift_at,
+	)
+
+	by_day = build_rotation()
+	change_shift_from(by_day[TOMORROW].name, TOMORROW, "B")
+	frappe.db.commit()
+
+	for label, stamp, want_shift, want_day in (
+		("22:30 on 08-08 -> C", TODAY + " 22:30:00", "C", TODAY),
+		("06:05 on 09-08 still belongs to 08-08's C", TOMORROW + " 06:05:00", "C", TODAY),
+		("15:00 on 09-08 -> the new B", TOMORROW + " 15:00:00", "B", TOMORROW),
+		("08:00 on 10-08 -> A", "2026-08-10 08:00:00", "A", "2026-08-10"),
+	):
+		det = shift_at(emp.name, get_datetime(stamp), True)
+		got_shift = det.shift_type.name if det and det.shift_type else None
+		got_day = str(det.start_datetime)[:10] if det and det.start_datetime else None
+		ok("17 auto-attendance lookup: " + label,
+			got_shift == want_shift and got_day == want_day, f"{got_shift} starting {got_day}")
+	wipe()
 
 	cleanup()
