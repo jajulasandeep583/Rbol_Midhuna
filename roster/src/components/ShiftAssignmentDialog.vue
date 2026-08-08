@@ -117,9 +117,42 @@
 					<div v-html="deleteDialogOptions.message" />
 				</template>
 			</Dialog>
+			<Dialog
+				v-model="showChangeDialog"
+				:options="{
+					title: changeDialogOptions.title,
+					actions: [
+						{
+							label: changing ? 'Changing...' : 'Change Shift',
+							variant: 'solid',
+							loading: changing,
+							disabled: changing,
+							onClick: submitChangeShift,
+						},
+					],
+				}"
+			>
+				<template #body-content>
+					<div class="space-y-4">
+						<div class="text-sm text-gray-600" v-html="changeDialogOptions.message" />
+						<Link
+							doctype="Shift Type"
+							label="New Shift"
+							v-model="newShiftType"
+							:filters="{ name: ['!=', form.shift_type] }"
+						/>
+						<div v-if="changeWarning" class="text-sm text-orange-600">
+							{{ changeWarning }}
+						</div>
+					</div>
+				</template>
+			</Dialog>
 		</template>
 		<template #actions>
 			<div class="flex space-x-3 justify-end">
+				<Dropdown v-if="props.shiftAssignmentName" :options="changeActions">
+					<Button size="md" label="Change Shift" class="w-32" />
+				</Dropdown>
 				<Dropdown v-if="props.shiftAssignmentName" :options="actions">
 					<Button size="md" label="Delete" class="w-28 text-red-600" />
 				</Dropdown>
@@ -148,7 +181,7 @@ import {
 	createListResource,
 } from "frappe-ui";
 import Link from "./Link.vue";
-import { dayjs, raiseToast } from "../utils";
+import { dayjs, raiseToast, errorMessage } from "../utils";
 
 type Status = "Active" | "Inactive";
 
@@ -220,6 +253,15 @@ const frequency = ref("Every Week");
 const showDeleteDialog = ref(false);
 const deleteDialogOptions = ref({ title: "", message: "", action: () => {} });
 
+// Change Shift: swap the clicked day (or that day onwards) onto another shift
+// without cancelling what has already been worked.
+const showChangeDialog = ref(false);
+const changeMode = ref<"day" | "onwards">("day");
+const newShiftType = ref("");
+const changeWarning = ref("");
+const changeDialogOptions = ref({ title: "", message: "" });
+const changing = ref(false);
+
 const dialog = computed(() => {
 	if (props.shiftAssignmentName)
 		return {
@@ -237,6 +279,59 @@ const dialog = computed(() => {
 		actionDisabled: false,
 	};
 });
+
+const changeActions = computed(() => [
+	{
+		label: `Shift for ${selectedDate.value}`,
+		onClick: () => openChangeDialog("day"),
+	},
+	{
+		label: `${selectedDate.value} and all following days`,
+		onClick: () => openChangeDialog("onwards"),
+	},
+]);
+
+const openChangeDialog = (mode: "day" | "onwards") => {
+	changeMode.value = mode;
+	changing.value = false;
+	newShiftType.value = "";
+	changeWarning.value = "";
+	changeDialogOptions.value = {
+		title: mode === "day" ? `Change shift for ${selectedDate.value}` : "Change shift onwards",
+		message:
+			mode === "day"
+				? `<b>${form.employee_name}</b> is on <b>${form.shift_type}</b> for <b>${selectedDate.value}</b>. Pick the shift to put on that day &mdash; the days either side stay on <b>${form.shift_type}</b>.`
+				: `<b>${form.employee_name}</b> is on <b>${form.shift_type}</b> from <b>${form.start_date}</b>${
+						form.end_date ? ` to <b>${form.end_date}</b>` : ""
+				  }. Pick the shift to run from <b>${selectedDate.value}</b> onwards &mdash; every day before that stays on <b>${form.shift_type}</b>.`,
+	};
+	changeShiftContext.submit();
+	showChangeDialog.value = true;
+};
+
+const submitChangeShift = async () => {
+	if (!newShiftType.value) {
+		changeWarning.value = "Pick the shift to change to.";
+		return;
+	}
+	if (changing.value) return; // the call takes a few seconds -- one is enough
+	changeWarning.value = "";
+	changing.value = true;
+	// await the resource rather than leaning on its onSuccess hook, so the
+	// dialog closes and the roster refetches on the same tick the server
+	// confirms the change
+	try {
+		const resource = changeMode.value === "day" ? changeShiftOnDate : changeShiftFrom;
+		await resource.submit();
+		showChangeDialog.value = false;
+		raiseToast("success", "Shift changed successfully!");
+		emit("fetchEvents");
+	} catch (error) {
+		changeWarning.value = stripHtml(errorMessage(error));
+	} finally {
+		changing.value = false;
+	}
+};
 
 const actions = computed(() => {
 	const options = [
@@ -304,6 +399,7 @@ watch(
 		}
 
 		showDeleteDialog.value = false;
+		showChangeDialog.value = false;
 
 		if (props.shiftAssignmentName) {
 			shiftAssignment.value = getShiftAssignment(props.shiftAssignmentName);
@@ -369,16 +465,16 @@ const getShiftAssignment = (name: string) =>
 			});
 			if (form.shift_schedule_assignment) shiftSchedule.fetch();
 		},
-		onError(error: { messages: string[] }) {
-			raiseToast("error", error.messages[0]);
+		onError(error: unknown) {
+			raiseToast("error", errorMessage(error));
 		},
 		setValue: {
 			onSuccess() {
 				raiseToast("success", "Shift Assignment updated successfully!");
 				emit("fetchEvents");
 			},
-			onError(error: { messages: string[] }) {
-				raiseToast("error", error.messages[0]);
+			onError(error: unknown) {
+				raiseToast("error", errorMessage(error));
 			},
 		},
 	});
@@ -397,8 +493,8 @@ const employee = createResource({
 		form.company = data.company;
 		form.department = data.department;
 	},
-	onError(error: { messages: string[] }) {
-		raiseToast("error", error.messages[0]);
+	onError(error: unknown) {
+		raiseToast("error", errorMessage(error));
 	},
 });
 
@@ -413,8 +509,8 @@ const shiftSchedule = createResource({
 			repeatOnDays[day as keyof typeof repeatOnDays] = data.repeat_on_days.includes(day);
 		}
 	},
-	onError(error: { messages: string[] }) {
-		raiseToast("error", error.messages[0]);
+	onError(error: unknown) {
+		raiseToast("error", errorMessage(error));
 	},
 });
 
@@ -425,8 +521,8 @@ const shiftAssignments = createListResource({
 			raiseToast("success", "Shift Assignment created successfully!");
 			emit("fetchEvents");
 		},
-		onError(error: { messages: string[] }) {
-			raiseToast("error", error.messages[0]);
+		onError(error: unknown) {
+			raiseToast("error", errorMessage(error));
 		},
 	},
 	delete: {
@@ -434,8 +530,8 @@ const shiftAssignments = createListResource({
 			raiseToast("success", "Shift Assignment deleted successfully!");
 			emit("fetchEvents");
 		},
-		onError(error: { messages: string[] }) {
-			raiseToast("error", error.messages[0]);
+		onError(error: unknown) {
+			raiseToast("error", errorMessage(error));
 		},
 	},
 });
@@ -457,10 +553,53 @@ const insertShift = createResource({
 		raiseToast("success", "Shift Assignment created successfully!");
 		emit("fetchEvents");
 	},
-	onError(error: { messages: string[] }) {
-		raiseToast("error", error.messages[0]);
+	onError(error: unknown) {
+		raiseToast("error", errorMessage(error));
 	},
 });
+
+const changeShiftContext = createResource({
+	url: "rbol.api.roster.get_change_shift_context",
+	makeParams() {
+		return { assignment: props.shiftAssignmentName };
+	},
+	onSuccess: (data: { last_attendance_date?: string }) => {
+		changeWarning.value = data?.last_attendance_date
+			? `Attendance is already marked up to ${data.last_attendance_date}. Those days cannot be changed.`
+			: "";
+	},
+	onError(error: unknown) {
+		raiseToast("error", errorMessage(error));
+	},
+});
+
+const changeShiftOnDate = createResource({
+	url: "rbol.api.roster.change_shift_on_date",
+	makeParams() {
+		return {
+			assignment: props.shiftAssignmentName,
+			date: selectedDate.value,
+			new_shift_type: newShiftType.value,
+		};
+	},
+});
+
+const changeShiftFrom = createResource({
+	url: "rbol.api.roster.change_shift_from",
+	makeParams() {
+		return {
+			assignment: props.shiftAssignmentName,
+			from_date: selectedDate.value,
+			new_shift_type: newShiftType.value,
+		};
+	},
+});
+
+const stripHtml = (html: string) => {
+	const el = document.createElement("div");
+	el.innerHTML = html || "";
+	return el.textContent || "";
+};
 
 const deleteCurrentShift = createResource({
 	url: "rbol.api.roster.break_shift",
@@ -474,8 +613,8 @@ const deleteCurrentShift = createResource({
 		raiseToast("success", "Shift deleted successfully!");
 		emit("fetchEvents");
 	},
-	onError(error: { messages: string[] }) {
-		raiseToast("error", error.messages[0]);
+	onError(error: unknown) {
+		raiseToast("error", errorMessage(error));
 	},
 });
 
@@ -500,8 +639,8 @@ const createShiftAssignmentSchedule = createResource({
 		raiseToast("success", "Shift Schedule Assignment created successfully!");
 		emit("fetchEvents");
 	},
-	onError(error: { messages: string[] }) {
-		raiseToast("error", error.messages[0]);
+	onError(error: unknown) {
+		raiseToast("error", errorMessage(error));
 	},
 });
 
@@ -514,8 +653,8 @@ const deleteShiftScheduleAssignment = createResource({
 		raiseToast("success", "Shift Schedule Assignment deleted successfully!");
 		emit("fetchEvents");
 	},
-	onError(error: { messages: string[] }) {
-		raiseToast("error", error.messages[0]);
+	onError(error: unknown) {
+		raiseToast("error", errorMessage(error));
 	},
 });
 </script>

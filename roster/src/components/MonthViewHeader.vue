@@ -30,7 +30,7 @@ import { reactive, watch } from "vue";
 import { FormControl, createResource, createListResource } from "frappe-ui";
 import { Dayjs } from "dayjs";
 
-import { raiseToast } from "../utils";
+import { raiseToast, errorMessage } from "../utils";
 
 export type FilterField =
 	| "company"
@@ -116,8 +116,8 @@ const getFilterOptions = (field: FilterField, listFilters: { company?: string } 
 			filters[field].model = { value };
 			filters[field].options = data.map((item) => item.name);
 		},
-		onError(error: { messages: string[] }) {
-			raiseToast("error", error.messages[0]);
+		onError(error: unknown) {
+			raiseToast("error", errorMessage(error));
 		},
 	});
 };

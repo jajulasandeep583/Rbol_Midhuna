@@ -348,3 +348,52 @@ def group_by_employee(events: list[dict]) -> dict[str, list[dict]]:
 			{k: v for k, v in event.items() if k != "employee"}
 		)
 	return grouped_events
+
+
+# --------------------------------------------------------------------------
+# Changing a shift from the roster.
+#
+# The roster's own "Delete -> Shift for <date>" (break_shift) removes a day and
+# leaves a hole; to put a different shift on that day you then had to create a
+# new assignment by hand, and any attempt to touch a day whose neighbour was
+# already worked ran into the cancel guard. These two hand the job to
+# rbol.custom_shift_assignment, which shortens rather than cancels wherever
+# there is a worked head to keep.
+# --------------------------------------------------------------------------
+
+
+@frappe.whitelist()
+def change_shift_on_date(
+	assignment: str,
+	date: str,
+	new_shift_type: str,
+	new_status: str | None = None,
+	shift_location: str | None = None,
+) -> dict:
+	"""Swap just the clicked day onto another shift, days either side unchanged."""
+	from rbol.custom_shift_assignment import change_shift_on_date as _impl
+
+	return _impl(assignment, date, new_shift_type, new_status, shift_location)
+
+
+@frappe.whitelist()
+def change_shift_from(
+	assignment: str,
+	from_date: str,
+	new_shift_type: str,
+	new_status: str | None = None,
+	shift_location: str | None = None,
+) -> dict:
+	"""Swap the clicked day and every following day of the assignment."""
+	from rbol.custom_shift_assignment import change_shift_from as _impl
+
+	return _impl(assignment, from_date, new_shift_type, new_status, shift_location)
+
+
+@frappe.whitelist()
+def get_change_shift_context(assignment: str) -> dict:
+	"""Current shift, range, and the last day already marked -- so the roster
+	dialog can show what is safe to change before anything is touched."""
+	from rbol.custom_shift_assignment import get_change_shift_context as _impl
+
+	return _impl(assignment)

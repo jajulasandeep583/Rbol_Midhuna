@@ -176,11 +176,11 @@
 									borderColor:
 										hoveredCell.shift === shift.name &&
 										hoveredCell.date === day.date
-											? colors[shift.color as Color][300]
-											: colors[shift.color as Color][200],
+											? shiftColor(shift.color, 300)
+											: shiftColor(shift.color, 200),
 									backgroundColor:
 										shift.status === 'Active'
-											? colors[shift.color as Color][50]
+											? shiftColor(shift.color, 50)
 											: 'white',
 								}"
 								@click="
@@ -271,7 +271,7 @@ import colors from "tailwindcss/colors";
 import { Avatar, Autocomplete, FeatherIcon, createResource } from "frappe-ui";
 import { Dayjs } from "dayjs";
 
-import { dayjs, raiseToast } from "../utils";
+import { dayjs, raiseToast, errorMessage } from "../utils";
 import { EmployeeFilters, ShiftFilters } from "../views/MonthView.vue";
 import ShiftAssignmentDialog from "./ShiftAssignmentDialog.vue";
 
@@ -404,13 +404,19 @@ const events = createResource({
 	onSuccess() {
 		loading.value = false;
 	},
-	onError(error: { messages: string[] }) {
-		raiseToast("error", error.messages[0]);
+	onError(error: unknown) {
+		raiseToast("error", errorMessage(error));
 	},
 	transform: (data: Events) => {
 		const mappedEvents: MappedEvents = {};
 		for (const employee in data) {
-			mapEventsToDates(data, mappedEvents, employee);
+			try {
+				mapEventsToDates(data, mappedEvents, employee);
+			} catch (e) {
+				// keep the rest of the roster usable and say who is affected
+				mappedEvents[employee] = {};
+				console.error(`Roster: could not map events for ${employee}`, e);
+			}
 		}
 		return mappedEvents;
 	},
@@ -432,9 +438,9 @@ const swapShift = createResource({
 		raiseToast("success", `Shift ${dropCell.value.shift ? "swapped" : "moved"} successfully!`);
 		events.fetch();
 	},
-	onError(error: { messages: string[] }) {
+	onError(error: unknown) {
 		loading.value = false;
-		raiseToast("error", error.messages[0]);
+		raiseToast("error", errorMessage(error));
 	},
 });
 
@@ -499,12 +505,18 @@ const handleShifts = (
 			shift_type: event.shift_type,
 			shift_location: event.shift_location,
 			status: event.status,
-			start_time: dayjs(event.start_time, "hh:mm:ss").format("HH:mm"),
-			end_time: dayjs(event.end_time, "hh:mm:ss").format("HH:mm"),
-			color: event.color.toLowerCase() as Color,
+			// a Shift Assignment whose Shift Type has since been deleted comes
+			// back with null times and colour -- render it plainly instead of
+			// throwing, which used to take the entire roster down with it
+			start_time: event.start_time ? dayjs(event.start_time, "hh:mm:ss").format("HH:mm") : "",
+			end_time: event.end_time ? dayjs(event.end_time, "hh:mm:ss").format("HH:mm") : "",
+			color: (event.color || "gray").toLowerCase() as Color,
 		});
 	}
 };
+
+const shiftColor = (color: string, tone: number) =>
+	((colors[color as Color] || colors.gray) as Record<number, string>)[tone];
 
 const sortShiftsByStartTime = (mappedEvents: MappedEvents, employee: string, key: string) => {
 	if (Array.isArray(mappedEvents[employee][key]))

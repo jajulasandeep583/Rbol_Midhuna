@@ -24,6 +24,9 @@ ROSTER_API_FUNCS = [
 	"get_schedule_from_assignment",
 	"create_shift_schedule_assignment",
 	"delete_shift_schedule_assignment",
+	"change_shift_on_date",
+	"change_shift_from",
+	"get_change_shift_context",
 ]
 
 # doctypes the vendored API reads/writes — these come from HRMS, which only

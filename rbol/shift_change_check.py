@@ -498,4 +498,130 @@ def _run():
 			got_shift == want_shift and got_day == want_day, f"{got_shift} starting {got_day}")
 	wipe()
 
+	# ---------------------------------------------------------------- 18
+	# change_shift_on_date -- what the ROSTER calls when you change one cell.
+	# Only the clicked day moves; the days either side keep the old shift.
+	from rbol.custom_shift_assignment import change_shift_on_date
+
+	def spans():
+		return "; ".join(
+			f"{r.shift_type} {r.start_date}->{r.end_date}"
+			for r in frappe.get_all("Shift Assignment",
+				filters={"employee": emp.name, "docstatus": 1},
+				fields=["shift_type", "start_date", "end_date"], order_by="start_date"))
+
+	# 18a mid-range: head shortened, one day swapped, tail keeps the old shift
+	wipe()
+	a = mk("C", TODAY, MONTH_END)
+	at = att(TODAY, "C")
+	c_out = ci(TOMORROW + " 06:05:00", "OUT")
+	frappe.db.set_value("Employee Checkin", c_out.name, "attendance", at.name)
+	frappe.db.commit()
+	try:
+		change_shift_on_date(a.name, TOMORROW, "B")
+		frappe.db.commit()
+		ok("18a change only 09-08 inside a range", True)
+	except Exception as e:
+		frappe.db.rollback()
+		ok("18a change only 09-08 inside a range", False, frappe.utils.strip_html(str(e))[:200])
+	ok("18a result is C 08-08, B 09-08, C 10-08 -> 31-08",
+		spans() == ("C 2026-08-08->2026-08-08; B 2026-08-09->2026-08-09; "
+			"C 2026-08-10->2026-08-31"), spans())
+	ok("18a the 08-08 Attendance is untouched",
+		frappe.db.get_value("Attendance", at.name, ["docstatus", "shift", "attendance_date"])
+		== (1, "C", getdate(TODAY)))
+	ok("18a the 09-08 morning punch still belongs to 08-08's C shift",
+		frappe.db.get_value("Employee Checkin", c_out.name, "shift") == "C"
+		and str(frappe.db.get_value("Employee Checkin", c_out.name, "shift_start")).startswith(TODAY),
+		str(frappe.db.get_value("Employee Checkin", c_out.name, ["shift", "shift_start"])))
+
+	# 18b day-wise: the clicked day is the whole assignment, no tail to rebuild
+	by_day = build_rotation()
+	try:
+		change_shift_on_date(by_day[TOMORROW].name, TOMORROW, "B")
+		frappe.db.commit()
+		ok("18b change only 09-08 on a day-wise roster", True)
+	except Exception as e:
+		frappe.db.rollback()
+		ok("18b change only 09-08 on a day-wise roster", False,
+			frappe.utils.strip_html(str(e))[:200])
+	now = roster_now()
+	ok("18b 09-08 is B, 08-08 is C, 10-08 is A",
+		now.get(TOMORROW) == "B" and now.get(TODAY) == "C" and now.get("2026-08-10") == "A",
+		str({d: now.get(d) for d in (TODAY, TOMORROW, "2026-08-10")}))
+	ok("18b no day gained or lost", len(now) == len(ROSTER), f"{len(now)} vs {len(ROSTER)}")
+
+	# 18c the clicked day is the assignment's first day but a tail follows
+	wipe()
+	a = mk("C", TOMORROW, MONTH_END)
+	try:
+		change_shift_on_date(a.name, TOMORROW, "B")
+		frappe.db.commit()
+		ok("18c change the first day of a range", True)
+	except Exception as e:
+		frappe.db.rollback()
+		ok("18c change the first day of a range", False, frappe.utils.strip_html(str(e))[:200])
+	ok("18c result is B 09-08, C 10-08 -> 31-08",
+		spans() == "B 2026-08-09->2026-08-09; C 2026-08-10->2026-08-31", spans())
+	ok("18c the original assignment is cancelled",
+		frappe.db.get_value("Shift Assignment", a.name, "docstatus") == 2)
+
+	# 18d a day that is already marked is still refused
+	wipe()
+	a = mk("C", TODAY, MONTH_END)
+	att(TODAY, "C")
+	try:
+		change_shift_on_date(a.name, TODAY, "B")
+		frappe.db.commit()
+		ok("18d refuses to change a day that is already marked", False, "it went through")
+	except frappe.ValidationError as e:
+		frappe.db.rollback()
+		ok("18d refuses to change a day that is already marked", True,
+			frappe.utils.strip_html(str(e))[:110])
+	ok("18d nothing changed", spans() == "C 2026-08-08->2026-08-31", spans())
+
+	# 18e open-ended assignment keeps its open tail
+	wipe()
+	a = mk("C", TODAY, None)
+	try:
+		change_shift_on_date(a.name, TOMORROW, "B")
+		frappe.db.commit()
+		ok("18e open-ended: one day swapped, tail stays open", True)
+	except Exception as e:
+		frappe.db.rollback()
+		ok("18e open-ended: one day swapped, tail stays open", False,
+			frappe.utils.strip_html(str(e))[:200])
+	ok("18e result is C 08-08, B 09-08, C 10-08 -> open",
+		spans() == "C 2026-08-08->2026-08-08; B 2026-08-09->2026-08-09; C 2026-08-10->None",
+		spans())
+
+	# 18f loop three separate days inside one long range
+	wipe()
+	a = mk("C", "2026-08-01", MONTH_END)
+	loop_ok, detail = True, []
+	for day, shift in (("2026-08-05", "A"), ("2026-08-10", "B"), ("2026-08-20", "A")):
+		try:
+			target = frappe.get_all("Shift Assignment",
+				filters={"employee": emp.name, "docstatus": 1, "shift_type": "C",
+					"start_date": ("<=", day)}, order_by="start_date desc", pluck="name")
+			change_shift_on_date(target[0], day, shift)
+			frappe.db.commit()
+			detail.append(f"{day}->{shift} ok")
+		except Exception as e:
+			frappe.db.rollback()
+			loop_ok = False
+			detail.append(f"{day}->{shift} FAILED: " + frappe.utils.strip_html(str(e))[:90])
+	ok("18f three single days changed inside one long range", loop_ok, "; ".join(detail))
+	rows = frappe.get_all("Shift Assignment", filters={"employee": emp.name, "docstatus": 1},
+		fields=["shift_type", "start_date", "end_date"], order_by="start_date")
+	ok("18f result is C 01-04, A 05, C 06-09, B 10, C 11-19, A 20, C 21-31",
+		spans() == ("C 2026-08-01->2026-08-04; A 2026-08-05->2026-08-05; "
+			"C 2026-08-06->2026-08-09; B 2026-08-10->2026-08-10; "
+			"C 2026-08-11->2026-08-19; A 2026-08-20->2026-08-20; "
+			"C 2026-08-21->2026-08-31"), spans())
+	ok("18f no gap and no overlap anywhere",
+		all(getdate(rows[i + 1].start_date) == add_days(rows[i].end_date, 1)
+			for i in range(len(rows) - 1)), spans())
+	wipe()
+
 	cleanup()

@@ -288,7 +288,7 @@ def change_shift_from(
 	if new_shift_type == doc.shift_type:
 		frappe.throw(_("{0} is already the shift on this assignment.").format(frappe.bold(new_shift_type)))
 
-	_validate_nothing_recorded_from(doc, from_date, end_date)
+	_validate_nothing_recorded(doc, from_date, end_date)
 
 	if from_date == start_date:
 		# nothing of the old assignment survives -- cancel it outright
@@ -303,16 +303,7 @@ def change_shift_from(
 		doc.save()
 		old_state = _("shortened to {0}").format(frappe.format(doc.end_date, {"fieldtype": "Date"}))
 
-	new = frappe.new_doc("Shift Assignment")
-	new.employee = doc.employee
-	new.company = doc.company
-	new.shift_type = new_shift_type
-	new.start_date = from_date
-	new.end_date = end_date
-	new.status = new_status or doc.status
-	new.shift_location = shift_location if shift_location is not None else doc.shift_location
-	new.insert(ignore_permissions=True)
-	new.submit()
+	new = _raise_assignment(doc, new_shift_type, from_date, end_date, new_status, shift_location)
 
 	frappe.msgprint(
 		_("{0} moved to shift {1} from {2}. Previous assignment {3} {4}.").format(
@@ -329,10 +320,10 @@ def change_shift_from(
 	return {"previous_assignment": doc.name, "new_assignment": new.name}
 
 
-def _validate_nothing_recorded_from(doc, from_date, end_date):
-	"""Days from `from_date` onwards are the ones being handed to the new shift.
-	If attendance has already been marked for any of them, the change would
-	silently contradict a booked record -- block with the exact date."""
+def _validate_nothing_recorded(doc, from_date, end_date):
+	"""The days being handed to the new shift. If attendance has already been
+	marked for any of them, the change would silently contradict a booked
+	record -- block with the exact date."""
 	filters = {
 		"employee": doc.employee,
 		"shift": doc.shift_type,
@@ -357,6 +348,110 @@ def _validate_nothing_recorded_from(doc, from_date, end_date):
 			),
 			title=_("Attendance Already Marked"),
 		)
+
+
+def _raise_assignment(doc, shift_type, start_date, end_date, status=None, shift_location=None):
+	new = frappe.new_doc("Shift Assignment")
+	new.employee = doc.employee
+	new.company = doc.company
+	new.shift_type = shift_type
+	new.start_date = start_date
+	new.end_date = end_date
+	new.status = status or doc.status
+	new.shift_location = shift_location if shift_location is not None else doc.shift_location
+	new.insert(ignore_permissions=True)
+	new.submit()
+	return new
+
+
+@frappe.whitelist()
+def change_shift_on_date(
+	assignment: str,
+	date: str,
+	new_shift_type: str,
+	new_status: str | None = None,
+	shift_location: str | None = None,
+) -> dict:
+	"""Swap a SINGLE day inside an assignment for a different shift, leaving the
+	days on either side on the original shift. This is what the roster needs:
+	you click one cell, not a date range.
+
+	  before:  C  01-08 ............................ 31-08
+	  after:   C  01-08 .. 08-08 | B 09-08 | C  10-08 .. 31-08
+
+	Same rule as change_shift_from: the head is shortened rather than cancelled
+	wherever there is a head to keep, so nothing already worked is disturbed.
+	"""
+	doc = frappe.get_doc("Shift Assignment", assignment)
+	doc.check_permission("write")
+
+	if doc.docstatus != 1:
+		frappe.throw(_("Only a submitted Shift Assignment can be changed."))
+
+	date = getdate(date)
+	start_date = getdate(doc.start_date)
+	end_date = getdate(doc.end_date) if doc.end_date else None
+
+	if date < start_date:
+		frappe.throw(
+			_("{0} is before this assignment starts ({1}).").format(
+				frappe.format(date, {"fieldtype": "Date"}),
+				frappe.format(start_date, {"fieldtype": "Date"}),
+			)
+		)
+	if end_date and date > end_date:
+		frappe.throw(
+			_("{0} is after this assignment ends ({1}).").format(
+				frappe.format(date, {"fieldtype": "Date"}),
+				frappe.format(end_date, {"fieldtype": "Date"}),
+			)
+		)
+	if new_shift_type == doc.shift_type:
+		frappe.throw(_("{0} is already the shift on this assignment.").format(frappe.bold(new_shift_type)))
+
+	_validate_nothing_recorded(doc, date, date)
+
+	has_tail = end_date is None or end_date > date
+	original_shift = doc.shift_type
+	original_status = doc.status
+	original_location = doc.shift_location
+
+	if date == start_date:
+		# no head to keep -- the whole assignment goes, and the tail (if any) is
+		# re-raised on the original shift below
+		doc.flags.ignore_permissions = True
+		doc.flags.skip_checkin_resync = True
+		doc.cancel()
+	else:
+		doc.end_date = add_days(date, -1)
+		doc.flags.ignore_permissions = True
+		doc.flags.skip_checkin_resync = True
+		doc.save()
+
+	changed = _raise_assignment(doc, new_shift_type, date, date, new_status, shift_location)
+
+	tail = None
+	if has_tail:
+		tail = _raise_assignment(
+			doc, original_shift, add_days(date, 1), end_date, original_status, original_location
+		)
+
+	frappe.msgprint(
+		_("{0} moved to shift {1} for {2} only. {3} either side.").format(
+			frappe.bold(doc.employee_name or doc.employee),
+			frappe.bold(new_shift_type),
+			frappe.bold(frappe.format(date, {"fieldtype": "Date"})),
+			_("Still on {0}").format(frappe.bold(original_shift)),
+		),
+		title=_("Shift Changed"),
+		indicator="green",
+	)
+
+	return {
+		"previous_assignment": doc.name,
+		"new_assignment": changed.name,
+		"tail_assignment": tail.name if tail else None,
+	}
 
 
 @frappe.whitelist()
