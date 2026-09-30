@@ -68,15 +68,14 @@
 							'border-l': colIdx,
 							'border-t': rowIdx,
 							'align-top': events.data?.[employee.name]?.[day.date],
-							'align-middle bg-blue-50':
-								events.data?.[employee.name]?.[day.date]?.holiday,
+							'bg-blue-50': holidays[employee.name]?.[day.date],
 							'align-middle bg-pink-50':
 								events.data?.[employee.name]?.[day.date]?.leave,
 							'bg-gray-50':
 								dropCell.employee === employee.name &&
 								dropCell.date === day.date &&
 								!(
-									isHolidayOrLeave(employee.name, day.date) ||
+									isLeave(employee.name, day.date) ||
 									hasSameShift(employee.name, day.date)
 								),
 						}"
@@ -97,7 +96,7 @@
 							() => {
 								if (
 									!(
-										isHolidayOrLeave(employee.name, day.date) ||
+										isLeave(employee.name, day.date) ||
 										hasSameShift(employee.name, day.date)
 									)
 								) {
@@ -107,23 +106,20 @@
 							}
 						"
 					>
-						<!-- Holiday -->
+						<!-- Holiday: a label only, shifts can still be assigned (the plant runs on holidays) -->
 						<div
-							v-if="events.data?.[employee.name]?.[day.date]?.holiday"
-							class="blocked-cell"
-						>
-							<div
-								v-html="
-									events.data[employee.name][day.date].weekly_off
-										? '<strong>WO</strong>'
-										: events.data[employee.name][day.date].description
-								"
-							></div>
-						</div>
+							v-if="holidays[employee.name]?.[day.date]"
+							class="holiday-tag"
+							v-html="
+								holidays[employee.name][day.date].weekly_off
+									? '<strong>WO</strong>'
+									: holidays[employee.name][day.date].description
+							"
+						></div>
 
 						<!-- Leave -->
 						<div
-							v-else-if="events.data?.[employee.name]?.[day.date]?.leave"
+							v-if="events.data?.[employee.name]?.[day.date]?.leave"
 							class="blocked-cell"
 						>
 							{{ events.data[employee.name][day.date].leave_type }}
@@ -376,8 +372,11 @@ watch(loading, (val) => {
 	if (!val) dropCell.value = { employee: "", date: "", shift: "" };
 });
 
-const isHolidayOrLeave = (employee: string, day: string) =>
-	events.data?.[employee]?.[day]?.holiday || events.data?.[employee]?.[day]?.leave;
+// holidays no longer block a cell -- only leave does
+const isLeave = (employee: string, day: string) => events.data?.[employee]?.[day]?.leave;
+
+// employee -> date -> holiday, kept apart from events so a holiday can carry shifts too
+const holidays = ref<Record<string, Record<string, Holiday>>>({});
 
 const hasSameShift = (employee: string, day: string) =>
 	Array.isArray(events.data?.[employee]?.[day]) &&
@@ -446,6 +445,7 @@ const swapShift = createResource({
 
 const mapEventsToDates = (data: Events, mappedEvents: MappedEvents, employee: string) => {
 	mappedEvents[employee] = {};
+	holidays.value[employee] = {};
 	for (let d = 1; d <= props.firstOfMonth.daysInMonth(); d++) {
 		const date = props.firstOfMonth.date(d);
 		const key = date.format("YYYY-MM-DD");
@@ -454,10 +454,7 @@ const mapEventsToDates = (data: Events, mappedEvents: MappedEvents, employee: st
 			let result: Holiday | Leave | undefined;
 			if ("holiday" in event) {
 				result = handleHoliday(event, date);
-				if (result) {
-					mappedEvents[employee][key] = result;
-					break;
-				}
+				if (result) holidays.value[employee][key] = result;
 			} else if ("leave" in event) {
 				result = handleLeave(event, date);
 				if (result) {
@@ -540,5 +537,8 @@ td:first-child {
 
 .blocked-cell {
 	@apply text-sm text-gray-500 text-center p-2;
+}
+.holiday-tag {
+	@apply text-xs font-medium text-blue-700 text-center truncate mb-1.5;
 }
 </style>

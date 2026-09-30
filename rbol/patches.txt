@@ -1,7 +1,9 @@
 [pre_model_sync]
 # Patches added in this section will be executed before doctypes are migrated
 # Read docs to understand patches: https://frappeframework.com/docs/v14/user/en/database-migrations
+rbol.patches.add_rbol_module_def
 
 [post_model_sync]
 # Patches added in this section will be executed after doctypes are migrated
 rbol.rbol_midhuna.report.stock_summary.install
+rbol.patches.enable_holiday_auto_attendance

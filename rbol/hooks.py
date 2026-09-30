@@ -161,6 +161,10 @@ doc_events = {
 	"Stock Ledger Entry": {
 		"before_insert": "rbol.overrides.permissions.block_restricted_warehouse",
 	},
+	"Attendance": {
+		"on_submit": "rbol.public_holiday_work.on_attendance_submit",
+		"on_cancel": "rbol.public_holiday_work.on_attendance_cancel",
+	},
 }
 
 # doc_events = {
