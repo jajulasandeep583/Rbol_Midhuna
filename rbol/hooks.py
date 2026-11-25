@@ -140,6 +140,7 @@ permission_query_conditions = {
 override_doctype_class = {
     "Shift Request": "rbol.custom_shift_request.CustomShiftRequest",
     "Shift Assignment": "rbol.custom_shift_assignment.CustomShiftAssignment",
+    "Report": "rbol.custom_report.CustomReport",
 }
 
 # override_doctype_class = {
