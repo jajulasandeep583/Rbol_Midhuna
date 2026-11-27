@@ -238,12 +238,19 @@ override_whitelisted_methods = {
 # `_export_query` calls the module-level `query_report.run` directly, so the
 # override above does not reach CSV/Excel export or report-backed dashboard
 # charts. Wrapping it here does. Idempotent, and re-checks the user per call.
-before_request = ["rbol.overrides.report_filter.install_report_filter"]
+# The second entry puts the company heading on top of every report Excel export.
+before_request = [
+	"rbol.overrides.report_filter.install_report_filter",
+	"rbol.overrides.report_export_header.install_export_header",
+]
 # after_request = ["rbol.utils.after_request"]
 
 # Job Events
 # ----------
-before_job = ["rbol.overrides.report_filter.install_report_filter"]
+before_job = [
+	"rbol.overrides.report_filter.install_report_filter",
+	"rbol.overrides.report_export_header.install_export_header",
+]
 # after_job = ["rbol.utils.after_job"]
 
 # User Data Protection
